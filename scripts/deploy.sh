@@ -46,6 +46,13 @@ fi
 
 # Apply Terraform
 echo "🔥 Running terraform apply..."
-terraform apply -var="project_name=ats_test" -var="environment=$ENVIRONMENT" -auto-approve
+# Get GitHub repository from environment or use default
+GITHUB_REPO=${GITHUB_REPOSITORY:-chande-dhanush/ATS_Test}
+
+terraform apply \
+  -var="project_name=ats-test" \
+  -var="environment=$ENVIRONMENT" \
+  -var="github_repository=$GITHUB_REPO" \
+  -auto-approve
 
 echo "✅ Deployment Successful!"

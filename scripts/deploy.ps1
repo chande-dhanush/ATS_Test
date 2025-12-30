@@ -44,6 +44,11 @@ if (-not ($workspaces | Select-String $Environment)) {
 }
 
 Write-Host "🔥 Running terraform apply..." -ForegroundColor Yellow
-terraform apply -var="project_name=ats_test" -var="environment=$Environment" -auto-approve
+$githubRepo = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } else { "chande-dhanush/ATS_Test" }
+terraform apply `
+  -var="project_name=ats-test" `
+  -var="environment=$Environment" `
+  -var="github_repository=$githubRepo" `
+  -auto-approve
 
 Write-Host "✅ Deployment Successful!" -ForegroundColor Green
