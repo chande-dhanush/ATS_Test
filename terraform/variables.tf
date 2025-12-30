@@ -4,11 +4,6 @@ variable "aws_region" {
   default     = "ap-south-1"
 }
 
-variable "github_repository" {
-  description = "GitHub repository name (org/repo)"
-  type        = string
-}
-
 variable "project_name" {
   description = "Name prefix for all resources"
   type        = string

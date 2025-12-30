@@ -95,14 +95,10 @@ if [ ! -f "../lambda-deployment.zip" ]; then
     rm dummy.txt
 fi
 
-# Get GitHub repository
-GITHUB_REPO=${GITHUB_REPOSITORY:-chande-dhanush/ATS_Test}
-
 # Run terraform destroy with auto-approve
 terraform destroy \
   -var="project_name=ats-test" \
   -var="environment=$ENVIRONMENT" \
-  -var="github_repository=$GITHUB_REPO" \
   -auto-approve
 
 echo "✅ Infrastructure for ${ENVIRONMENT} has been destroyed!"

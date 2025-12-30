@@ -27,8 +27,3 @@ output "custom_domain_url" {
   description = "Root URL of the production site"
   value       = var.use_custom_domain ? "https://${var.root_domain}" : ""
 }
-
-output "github_actions_role_arn" {
-  description = "ARN of the IAM role for GitHub Actions"
-  value       = try(aws_iam_role.github_actions.arn, "")
-}
