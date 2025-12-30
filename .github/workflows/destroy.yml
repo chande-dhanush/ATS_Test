@@ -1,8 +1,3 @@
-# =============================================================================
-# ATS Resume Analyzer - Destroy Environment Workflow
-# Uses OIDC authentication for secure AWS access
-# =============================================================================
-
 name: Destroy Environment
 
 on:
@@ -24,10 +19,6 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  AWS_REGION: ap-south-2
-  PROJECT_NAME: ats_test
-
 jobs:
   destroy:
     name: Destroy ${{ github.event.inputs.environment }}
@@ -48,50 +39,30 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials (OIDC)
+      - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           role-session-name: github-actions-destroy
-          aws-region: ${{ env.AWS_REGION }}
+          aws-region: ${{ secrets.DEFAULT_AWS_REGION }}
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.6.0"
-          terraform_wrapper: false
+          terraform_wrapper: false  # Important: disable wrapper to get raw outputs
 
-      - name: Terraform Init
-        working-directory: terraform
-        run: terraform init
-
-      - name: Select Workspace
-        working-directory: terraform
+      - name: Run Destroy Script
         run: |
-          ENVIRONMENT="${{ github.event.inputs.environment }}"
-          if terraform workspace list | grep -q "$ENVIRONMENT"; then
-            terraform workspace select "$ENVIRONMENT"
-          else
-            echo "❌ Workspace '$ENVIRONMENT' does not exist"
-            exit 1
-          fi
-
-      - name: Terraform Destroy
-        working-directory: terraform
-        run: |
-          terraform destroy \
-            -var="aws_region=${{ env.AWS_REGION }}" \
-            -var="project_name=${{ env.PROJECT_NAME }}" \
-            -var="environment=${{ github.event.inputs.environment }}" \
-            -auto-approve
+          # Set environment variables for the script
+          export AWS_ACCOUNT_ID=${{ secrets.AWS_ACCOUNT_ID }}
+          export DEFAULT_AWS_REGION=${{ secrets.DEFAULT_AWS_REGION }}
+          
+          # Make script executable and run it
+          chmod +x scripts/destroy.sh
+          ./scripts/destroy.sh ${{ github.event.inputs.environment }}
+        env:
+          AWS_ROLE_ARN: ${{ secrets.AWS_ROLE_ARN }}
 
       - name: Destruction Complete
         run: |
-          echo "=========================================="
           echo "✅ Environment ${{ github.event.inputs.environment }} has been destroyed!"
-          echo "=========================================="
-          echo ""
-          echo "💡 To remove the workspace, run locally:"
-          echo "   cd terraform"
-          echo "   terraform workspace select default"
-          echo "   terraform workspace delete ${{ github.event.inputs.environment }}"
