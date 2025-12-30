@@ -124,7 +124,18 @@ resource "aws_iam_role_policy" "github_additional" {
           "iam:TagRole",
           "iam:UntagRole",
           "iam:ListInstanceProfilesForRole",
+          "iam:CreateOpenIDConnectProvider",
+          "iam:DeleteOpenIDConnectProvider",
+          "iam:GetOpenIDConnectProvider",
+          "iam:TagOpenIDConnectProvider",
           "sts:GetCallerIdentity"
+        ]
+        Resource = "*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "apigateway:*"
         ]
         Resource = "*"
       }

@@ -78,8 +78,15 @@ if (-not (Test-Path "..\lambda-deployment.zip")) {
     Remove-Item "dummy.txt"
 }
 
+# Get GitHub repository
+$githubRepo = if ($env:GITHUB_REPOSITORY) { $env:GITHUB_REPOSITORY } else { "chande-dhanush/ATS_Test" }
+
 # Run terraform destroy with auto-approve
-terraform destroy -var="project_name=ats_test" -var="environment=$Environment" -auto-approve
+terraform destroy `
+  -var="project_name=ats-test" `
+  -var="environment=$Environment" `
+  -var="github_repository=$githubRepo" `
+  -auto-approve
 
 
 Write-Host "Infrastructure for $Environment has been destroyed!" -ForegroundColor Green
