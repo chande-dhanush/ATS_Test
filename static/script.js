@@ -36,6 +36,11 @@ let resumeText = '';
 // Constants
 const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB
 
+// API Configuration - Update this with your API Gateway URL after deployment
+// For local development, use empty string (relative paths)
+// For production, this will be injected by the deployment process
+const API_BASE_URL = window.API_BASE_URL || '';
+
 // ============================================
 // File Upload Handling
 // ============================================
@@ -181,7 +186,7 @@ async function parseResume(file) {
     const formData = new FormData();
     formData.append('file', file);
 
-    const response = await fetch('/parse-resume', {
+    const response = await fetch(`${API_BASE_URL}/parse-resume`, {
         method: 'POST',
         body: formData
     });
@@ -196,7 +201,7 @@ async function parseResume(file) {
 }
 
 async function analyzeResume(resumeText, jobInput) {
-    const response = await fetch('/analyze', {
+    const response = await fetch(`${API_BASE_URL}/analyze`, {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json'
