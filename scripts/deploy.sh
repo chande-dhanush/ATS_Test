@@ -51,4 +51,12 @@ terraform apply \
   -var="environment=$ENVIRONMENT" \
   -auto-approve
 
+# Get the frontend bucket name from terraform output
+FRONTEND_BUCKET=$(terraform output -raw s3_frontend_bucket)
+
+# Upload frontend files to S3
+echo "📤 Uploading frontend files to S3..."
+cd ..
+aws s3 sync static/ "s3://${FRONTEND_BUCKET}/" --delete
+
 echo "✅ Deployment Successful!"
