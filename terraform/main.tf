@@ -1,12 +1,14 @@
-# =============================================================================
-# ATS Resume Analyzer - Terraform Infrastructure
-# AWS Lambda + API Gateway + ECR (Cost-Optimized for Free Tier)
-# =============================================================================
+# Data source to get current AWS account ID
+data "aws_caller_identity" "current" {}
 
-# Locals for naming conventions
 locals {
+  aliases = var.use_custom_domain && var.root_domain != "" ? [
+    var.root_domain,
+    "www.${var.root_domain}"
+  ] : []
+
   name_prefix = "${var.project_name}-${var.environment}"
-  
+
   common_tags = {
     Project     = var.project_name
     Environment = var.environment
@@ -14,61 +16,80 @@ locals {
   }
 }
 
-# =============================================================================
-# Data Sources
-# =============================================================================
+# S3 bucket for conversation memory
+resource "aws_s3_bucket" "memory" {
+  bucket = "${local.name_prefix}-memory-${data.aws_caller_identity.current.account_id}"
+  tags   = local.common_tags
+}
 
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
+resource "aws_s3_bucket_public_access_block" "memory" {
+  bucket = aws_s3_bucket.memory.id
 
-# =============================================================================
-# ECR Repository
-# =============================================================================
+  block_public_acls       = true
+  block_public_policy     = true
+  ignore_public_acls      = true
+  restrict_public_buckets = true
+}
 
-resource "aws_ecr_repository" "app" {
-  name                 = "${var.project_name}-${var.environment}"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true  # Allow deletion even with images (dev-friendly)
-  
-  image_scanning_configuration {
-    scan_on_push = false  # Disable for cost savings
-  }
-  
-  # Lifecycle policy to keep only recent images (cost optimization)
-  lifecycle {
-    prevent_destroy = false
+resource "aws_s3_bucket_ownership_controls" "memory" {
+  bucket = aws_s3_bucket.memory.id
+
+  rule {
+    object_ownership = "BucketOwnerEnforced"
   }
 }
 
-# ECR Lifecycle Policy - Keep only last 3 images to save storage costs
-resource "aws_ecr_lifecycle_policy" "app" {
-  repository = aws_ecr_repository.app.name
-  
+# S3 bucket for frontend static website
+resource "aws_s3_bucket" "frontend" {
+  bucket = "${local.name_prefix}-frontend-${data.aws_caller_identity.current.account_id}"
+  tags   = local.common_tags
+}
+
+resource "aws_s3_bucket_public_access_block" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  block_public_acls       = false
+  block_public_policy     = false
+  ignore_public_acls      = false
+  restrict_public_buckets = false
+}
+
+resource "aws_s3_bucket_website_configuration" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
+  index_document {
+    suffix = "index.html"
+  }
+
+  error_document {
+    key = "404.html"
+  }
+}
+
+resource "aws_s3_bucket_policy" "frontend" {
+  bucket = aws_s3_bucket.frontend.id
+
   policy = jsonencode({
-    rules = [
+    Version = "2012-10-17"
+    Statement = [
       {
-        rulePriority = 1
-        description  = "Keep only last 3 images"
-        selection = {
-          tagStatus   = "any"
-          countType   = "imageCountMoreThan"
-          countNumber = 3
-        }
-        action = {
-          type = "expire"
-        }
-      }
+        Sid       = "PublicReadGetObject"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = "s3:GetObject"
+        Resource  = "${aws_s3_bucket.frontend.arn}/*"
+      },
     ]
   })
+
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
 }
 
-# =============================================================================
-# IAM Role for Lambda
-# =============================================================================
-
+# IAM role for Lambda
 resource "aws_iam_role" "lambda_role" {
-  name = "${var.project_name}-lambda-role-${var.environment}"
-  
+  name = "${local.name_prefix}-lambda-role"
+  tags = local.common_tags
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -78,142 +99,258 @@ resource "aws_iam_role" "lambda_role" {
         Principal = {
           Service = "lambda.amazonaws.com"
         }
-      }
+      },
     ]
   })
 }
 
-# Basic Lambda execution policy (CloudWatch Logs)
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+  role       = aws_iam_role.lambda_role.name
 }
 
-# Bedrock access policy
-resource "aws_iam_role_policy" "bedrock_access" {
-  name = "${var.project_name}-bedrock-access"
-  role = aws_iam_role.lambda_role.id
-  
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "bedrock:InvokeModel",
-          "bedrock:InvokeModelWithResponseStream"
-        ]
-        Resource = [
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.nova-micro-v1:0",
-          "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.nova-lite-v1:0"
-        ]
-      }
-    ]
-  })
+resource "aws_iam_role_policy_attachment" "lambda_bedrock" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonBedrockFullAccess"
+  role       = aws_iam_role.lambda_role.name
 }
 
-# =============================================================================
-# Lambda Function
-# =============================================================================
+resource "aws_iam_role_policy_attachment" "lambda_s3" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonS3FullAccess"
+  role       = aws_iam_role.lambda_role.name
+}
 
-resource "aws_lambda_function" "app" {
-  function_name = "${var.project_name}-${var.environment}"
-  role          = aws_iam_role.lambda_role.arn
-  package_type  = "Image"
-  image_uri     = "${aws_ecr_repository.app.repository_url}:latest"
-  
-  # Memory and timeout optimized for free tier and cost
-  memory_size = 512   # Minimum needed for PDF processing
-  timeout     = 30    # 30 seconds should be enough
-  
+# Lambda function
+resource "aws_lambda_function" "api" {
+  filename         = "${path.module}/../lambda-deployment.zip"
+  function_name    = "${local.name_prefix}-api"
+  role             = aws_iam_role.lambda_role.arn
+  handler          = "lambda_handler.handler"
+  source_code_hash = fileexists("${path.module}/../lambda-deployment.zip") ? filebase64sha256("${path.module}/../lambda-deployment.zip") : null
+  runtime          = "python3.12"
+  architectures    = ["x86_64"]
+  timeout          = var.lambda_timeout
+  tags             = local.common_tags
+
   environment {
     variables = {
-      AWS_REGION_NAME = var.aws_region
-      ENVIRONMENT     = var.environment
+      CORS_ORIGINS     = var.use_custom_domain ? "https://${var.root_domain},https://www.${var.root_domain}" : "https://${aws_cloudfront_distribution.main.domain_name}"
+      S3_BUCKET        = aws_s3_bucket.memory.id
+      USE_S3           = "true"
+      BEDROCK_MODEL_ID = var.bedrock_model_id
     }
   }
-  
-  # Depends on the ECR repository
-  depends_on = [
-    aws_ecr_repository.app,
-    aws_iam_role_policy_attachment.lambda_basic,
-    aws_iam_role_policy.bedrock_access
-  ]
-  
-  lifecycle {
-    ignore_changes = [image_uri]  # Image updated via CI/CD
-  }
+
+  # Ensure Lambda waits for the distribution to exist
+  depends_on = [aws_cloudfront_distribution.main]
 }
 
-# Lambda Function URL (Free alternative to API Gateway)
-resource "aws_lambda_function_url" "app" {
-  function_name      = aws_lambda_function.app.function_name
-  authorization_type = "NONE"  # Public access
-  
-  cors {
-    allow_origins     = ["*"]
-    allow_methods     = ["GET", "POST", "OPTIONS"]
-    allow_headers     = ["*"]
-    allow_credentials = false
-    max_age           = 3600
-  }
-}
-
-# =============================================================================
-# API Gateway (HTTP API - Cheaper than REST API)
-# =============================================================================
-
-resource "aws_apigatewayv2_api" "app" {
-  name          = "${var.project_name}-api-${var.environment}"
+# API Gateway HTTP API
+resource "aws_apigatewayv2_api" "main" {
+  name          = "${local.name_prefix}-api-gateway"
   protocol_type = "HTTP"
-  
+  tags          = local.common_tags
+
   cors_configuration {
-    allow_origins = ["*"]
-    allow_methods = ["GET", "POST", "OPTIONS"]
-    allow_headers = ["*"]
-    max_age       = 3600
+    allow_credentials = false
+    allow_headers     = ["*"]
+    allow_methods     = ["GET", "POST", "OPTIONS"]
+    allow_origins     = ["*"]
+    max_age           = 300
+  }
+}
+
+resource "aws_apigatewayv2_stage" "default" {
+  api_id      = aws_apigatewayv2_api.main.id
+  name        = "$default"
+  auto_deploy = true
+  tags        = local.common_tags
+
+  default_route_settings {
+    throttling_burst_limit = var.api_throttle_burst_limit
+    throttling_rate_limit  = var.api_throttle_rate_limit
   }
 }
 
 resource "aws_apigatewayv2_integration" "lambda" {
-  api_id                 = aws_apigatewayv2_api.app.id
-  integration_type       = "AWS_PROXY"
-  integration_uri        = aws_lambda_function.app.invoke_arn
-  integration_method     = "POST"
-  payload_format_version = "2.0"
+  api_id           = aws_apigatewayv2_api.main.id
+  integration_type = "AWS_PROXY"
+  integration_uri  = aws_lambda_function.api.invoke_arn
 }
 
-resource "aws_apigatewayv2_route" "default" {
-  api_id    = aws_apigatewayv2_api.app.id
-  route_key = "$default"
+# API Gateway Routes
+resource "aws_apigatewayv2_route" "get_root" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /"
   target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
-resource "aws_apigatewayv2_stage" "default" {
-  api_id      = aws_apigatewayv2_api.app.id
-  name        = "$default"
-  auto_deploy = true
-  
-  # Access logging (optional - costs money, disable for free tier)
-  # access_log_settings {
-  #   destination_arn = aws_cloudwatch_log_group.api_logs.arn
-  # }
+resource "aws_apigatewayv2_route" "post_chat" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "POST /chat"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
 }
 
-# Permission for API Gateway to invoke Lambda
-resource "aws_lambda_permission" "apigw" {
-  statement_id  = "AllowAPIGatewayInvoke"
+resource "aws_apigatewayv2_route" "get_health" {
+  api_id    = aws_apigatewayv2_api.main.id
+  route_key = "GET /health"
+  target    = "integrations/${aws_apigatewayv2_integration.lambda.id}"
+}
+
+# Lambda permission for API Gateway
+resource "aws_lambda_permission" "api_gw" {
+  statement_id  = "AllowExecutionFromAPIGateway"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.app.function_name
+  function_name = aws_lambda_function.api.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.app.execution_arn}/*/*"
+  source_arn    = "${aws_apigatewayv2_api.main.execution_arn}/*/*"
 }
 
-# =============================================================================
-# CloudWatch Log Group (with retention for cost optimization)
-# =============================================================================
+# CloudFront distribution
+resource "aws_cloudfront_distribution" "main" {
+  aliases = local.aliases
+  
+  viewer_certificate {
+    acm_certificate_arn            = var.use_custom_domain ? aws_acm_certificate.site[0].arn : null
+    cloudfront_default_certificate = var.use_custom_domain ? false : true
+    ssl_support_method             = var.use_custom_domain ? "sni-only" : null
+    minimum_protocol_version       = "TLSv1.2_2021"
+  }
 
-resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${aws_lambda_function.app.function_name}"
-  retention_in_days = 7  # Short retention for cost savings
+  origin {
+    domain_name = aws_s3_bucket_website_configuration.frontend.website_endpoint
+    origin_id   = "S3-${aws_s3_bucket.frontend.id}"
+
+    custom_origin_config {
+      http_port              = 80
+      https_port             = 443
+      origin_protocol_policy = "http-only"
+      origin_ssl_protocols   = ["TLSv1.2"]
+    }
+  }
+
+  enabled             = true
+  is_ipv6_enabled     = true
+  default_root_object = "index.html"
+  tags                = local.common_tags
+
+  default_cache_behavior {
+    allowed_methods  = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+    cached_methods   = ["GET", "HEAD"]
+    target_origin_id = "S3-${aws_s3_bucket.frontend.id}"
+
+    forwarded_values {
+      query_string = false
+      cookies {
+        forward = "none"
+      }
+    }
+
+    viewer_protocol_policy = "redirect-to-https"
+    min_ttl                = 0
+    default_ttl            = 3600
+    max_ttl                = 86400
+  }
+
+  restrictions {
+    geo_restriction {
+      restriction_type = "none"
+    }
+  }
+
+  custom_error_response {
+    error_code         = 404
+    response_code      = 200
+    response_page_path = "/index.html"
+  }
+}
+
+# Optional: Custom domain configuration (only created when use_custom_domain = true)
+data "aws_route53_zone" "root" {
+  count        = var.use_custom_domain ? 1 : 0
+  name         = var.root_domain
+  private_zone = false
+}
+
+resource "aws_acm_certificate" "site" {
+  count                     = var.use_custom_domain ? 1 : 0
+  provider                  = aws.us_east_1
+  domain_name               = var.root_domain
+  subject_alternative_names = ["www.${var.root_domain}"]
+  validation_method         = "DNS"
+  lifecycle { create_before_destroy = true }
+  tags = local.common_tags
+}
+
+resource "aws_route53_record" "site_validation" {
+  for_each = var.use_custom_domain ? {
+    for dvo in aws_acm_certificate.site[0].domain_validation_options :
+    dvo.domain_name => dvo
+  } : {}
+
+  zone_id = data.aws_route53_zone.root[0].zone_id
+  name    = each.value.resource_record_name
+  type    = each.value.resource_record_type
+  ttl     = 300
+  records = [each.value.resource_record_value]
+}
+
+resource "aws_acm_certificate_validation" "site" {
+  count           = var.use_custom_domain ? 1 : 0
+  provider        = aws.us_east_1
+  certificate_arn = aws_acm_certificate.site[0].arn
+  validation_record_fqdns = [
+    for r in aws_route53_record.site_validation : r.fqdn
+  ]
+}
+
+resource "aws_route53_record" "alias_root" {
+  count   = var.use_custom_domain ? 1 : 0
+  zone_id = data.aws_route53_zone.root[0].zone_id
+  name    = var.root_domain
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.main.domain_name
+    zone_id                = aws_cloudfront_distribution.main.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "alias_root_ipv6" {
+  count   = var.use_custom_domain ? 1 : 0
+  zone_id = data.aws_route53_zone.root[0].zone_id
+  name    = var.root_domain
+  type    = "AAAA"
+
+  alias {
+    name                   = aws_cloudfront_distribution.main.domain_name
+    zone_id                = aws_cloudfront_distribution.main.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "alias_www" {
+  count   = var.use_custom_domain ? 1 : 0
+  zone_id = data.aws_route53_zone.root[0].zone_id
+  name    = "www.${var.root_domain}"
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.main.domain_name
+    zone_id                = aws_cloudfront_distribution.main.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+resource "aws_route53_record" "alias_www_ipv6" {
+  count   = var.use_custom_domain ? 1 : 0
+  zone_id = data.aws_route53_zone.root[0].zone_id
+  name    = "www.${var.root_domain}"
+  type    = "AAAA"
+
+  alias {
+    name                   = aws_cloudfront_distribution.main.domain_name
+    zone_id                = aws_cloudfront_distribution.main.hosted_zone_id
+    evaluate_target_health = false
+  }
 }

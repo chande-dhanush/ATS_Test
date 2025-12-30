@@ -1,28 +1,34 @@
-# =============================================================================
-# Outputs
-# =============================================================================
-
 output "api_gateway_url" {
-  description = "API Gateway endpoint URL"
-  value       = aws_apigatewayv2_api.app.api_endpoint
+  description = "URL of the API Gateway"
+  value       = aws_apigatewayv2_api.main.api_endpoint
 }
 
-output "lambda_function_url" {
-  description = "Lambda Function URL (direct access)"
-  value       = aws_lambda_function_url.app.function_url
+output "cloudfront_url" {
+  description = "URL of the CloudFront distribution"
+  value       = "https://${aws_cloudfront_distribution.main.domain_name}"
 }
 
-output "ecr_repository_url" {
-  description = "ECR repository URL for Docker images"
-  value       = aws_ecr_repository.app.repository_url
+output "s3_frontend_bucket" {
+  description = "Name of the S3 bucket for frontend"
+  value       = aws_s3_bucket.frontend.id
+}
+
+output "s3_memory_bucket" {
+  description = "Name of the S3 bucket for memory storage"
+  value       = aws_s3_bucket.memory.id
 }
 
 output "lambda_function_name" {
   description = "Name of the Lambda function"
-  value       = aws_lambda_function.app.function_name
+  value       = aws_lambda_function.api.function_name
 }
 
-output "aws_region" {
-  description = "AWS region where resources are deployed"
-  value       = var.aws_region
+output "custom_domain_url" {
+  description = "Root URL of the production site"
+  value       = var.use_custom_domain ? "https://${var.root_domain}" : ""
+}
+
+output "github_actions_role_arn" {
+  description = "ARN of the IAM role for GitHub Actions"
+  value       = try(aws_iam_role.github_actions.arn, "")
 }

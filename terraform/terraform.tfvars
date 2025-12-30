@@ -1,7 +1,10 @@
-# =============================================================================
-# Default Variable Values
-# =============================================================================
+project_name     = "ats-test"
+environment      = "dev"
+aws_region       = "ap-south-1"
+bedrock_model_id = "amazon.nova-micro-v1:0"
 
-project_name = "ats_test"
-environment  = "dev"
-aws_region   = "ap-south-2"
+lambda_timeout           = 60
+api_throttle_burst_limit = 10
+api_throttle_rate_limit  = 5
+use_custom_domain        = false
+root_domain              = ""

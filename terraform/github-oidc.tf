@@ -1,24 +1,23 @@
-# =============================================================================
-# GitHub Actions OIDC Provider and IAM Role
-# Creates an IAM role that GitHub Actions can assume without long-lived keys
-# Run once, then remove or keep for reference
-# =============================================================================
+# This creates an IAM role that GitHub Actions can assume
+# Run this once, then you can remove the file
 
-variable "github_repository" {
-  description = "GitHub repository in format 'owner/repo'"
-  type        = string
-}
+# Note: aws_caller_identity.current is already defined in main.tf
 
 # GitHub OIDC Provider
-# Note: If this already exists in your account, import it:
+# Note: If this already exists in your account, you'll need to import it:
 # terraform import aws_iam_openid_connect_provider.github arn:aws:iam::ACCOUNT_ID:oidc-provider/token.actions.githubusercontent.com
 resource "aws_iam_openid_connect_provider" "github" {
   url = "https://token.actions.githubusercontent.com"
   
-  client_id_list = ["sts.amazonaws.com"]
+  client_id_list = [
+    "sts.amazonaws.com"
+  ]
   
-  # GitHub's OIDC thumbprint
-  thumbprint_list = ["1b511abead59c6ce207077c0bf0e0043b1382612"]
+  # This thumbprint is from GitHub's documentation
+  # Verify current value at: https://github.blog/changelog/2023-06-27-github-actions-update-on-oidc-integration-with-aws/
+  thumbprint_list = [
+    "1b511abead59c6ce207077c0bf0e0043b1382612"
+  ]
 }
 
 # IAM Role for GitHub Actions
@@ -47,9 +46,9 @@ resource "aws_iam_role" "github_actions" {
   })
   
   tags = {
-    Name       = "GitHub Actions Deploy Role"
-    Repository = var.github_repository
-    ManagedBy  = "terraform"
+    Name        = "GitHub Actions Deploy Role"
+    Repository  = var.github_repository
+    ManagedBy   = "terraform"
   }
 }
 
@@ -69,13 +68,13 @@ resource "aws_iam_role_policy_attachment" "github_apigateway" {
   role       = aws_iam_role.github_actions.name
 }
 
-resource "aws_iam_role_policy_attachment" "github_ecr" {
-  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryFullAccess"
+resource "aws_iam_role_policy_attachment" "github_cloudfront" {
+  policy_arn = "arn:aws:iam::aws:policy/CloudFrontFullAccess"
   role       = aws_iam_role.github_actions.name
 }
 
-resource "aws_iam_role_policy_attachment" "github_cloudwatch" {
-  policy_arn = "arn:aws:iam::aws:policy/CloudWatchLogsFullAccess"
+resource "aws_iam_role_policy_attachment" "github_iam_read" {
+  policy_arn = "arn:aws:iam::aws:policy/IAMReadOnlyAccess"
   role       = aws_iam_role.github_actions.name
 }
 
@@ -84,7 +83,22 @@ resource "aws_iam_role_policy_attachment" "github_bedrock" {
   role       = aws_iam_role.github_actions.name
 }
 
-# Custom policy for additional permissions (IAM role management)
+resource "aws_iam_role_policy_attachment" "github_dynamodb" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
+  role       = aws_iam_role.github_actions.name
+}
+
+resource "aws_iam_role_policy_attachment" "github_acm" {
+  policy_arn = "arn:aws:iam::aws:policy/AWSCertificateManagerFullAccess"
+  role       = aws_iam_role.github_actions.name
+}
+
+resource "aws_iam_role_policy_attachment" "github_route53" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonRoute53FullAccess"
+  role       = aws_iam_role.github_actions.name
+}
+
+# Custom policy for additional permissions
 resource "aws_iam_role_policy" "github_additional" {
   name = "github-actions-additional"
   role = aws_iam_role.github_actions.id
@@ -116,9 +130,4 @@ resource "aws_iam_role_policy" "github_additional" {
       }
     ]
   })
-}
-
-output "github_actions_role_arn" {
-  description = "ARN of the IAM role for GitHub Actions"
-  value       = aws_iam_role.github_actions.arn
 }
