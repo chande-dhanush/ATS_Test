@@ -1,0 +1,97 @@
+# =============================================================================
+# ATS Resume Analyzer - Destroy Environment Workflow
+# Uses OIDC authentication for secure AWS access
+# =============================================================================
+
+name: Destroy Environment
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to destroy'
+        required: true
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+      confirm:
+        description: 'Type the environment name to confirm destruction'
+        required: true
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-2
+  PROJECT_NAME: ats_test
+
+jobs:
+  destroy:
+    name: Destroy ${{ github.event.inputs.environment }}
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment }}
+    
+    steps:
+      - name: Verify confirmation
+        run: |
+          if [ "${{ github.event.inputs.confirm }}" != "${{ github.event.inputs.environment }}" ]; then
+            echo "❌ Confirmation does not match environment name!"
+            echo "You entered: '${{ github.event.inputs.confirm }}'"
+            echo "Expected: '${{ github.event.inputs.environment }}'"
+            exit 1
+          fi
+          echo "✅ Destruction confirmed for ${{ github.event.inputs.environment }}"
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-destroy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Select Workspace
+        working-directory: terraform
+        run: |
+          ENVIRONMENT="${{ github.event.inputs.environment }}"
+          if terraform workspace list | grep -q "$ENVIRONMENT"; then
+            terraform workspace select "$ENVIRONMENT"
+          else
+            echo "❌ Workspace '$ENVIRONMENT' does not exist"
+            exit 1
+          fi
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: |
+          terraform destroy \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="project_name=${{ env.PROJECT_NAME }}" \
+            -var="environment=${{ github.event.inputs.environment }}" \
+            -auto-approve
+
+      - name: Destruction Complete
+        run: |
+          echo "=========================================="
+          echo "✅ Environment ${{ github.event.inputs.environment }} has been destroyed!"
+          echo "=========================================="
+          echo ""
+          echo "💡 To remove the workspace, run locally:"
+          echo "   cd terraform"
+          echo "   terraform workspace select default"
+          echo "   terraform workspace delete ${{ github.event.inputs.environment }}"

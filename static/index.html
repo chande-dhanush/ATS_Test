@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description"
+        content="Mini ATS Resume Analyzer - Simulate how an ATS screens your resume against job descriptions">
+    <title>ATS Resume Analyzer</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+
+<body>
+    <div class="container">
+        <!-- Header -->
+        <header class="header">
+            <div class="logo">
+                <span class="logo-icon">📄</span>
+                <h1>ATS Resume Analyzer</h1>
+            </div>
+            <p class="tagline">See how an ATS really sees your resume</p>
+        </header>
+
+        <!-- Main Content -->
+        <main class="main-content">
+            <!-- Section 1: Resume Upload -->
+            <section class="card upload-section" id="upload-section">
+                <div class="card-header">
+                    <span class="step-number">1</span>
+                    <h2>Upload Resume</h2>
+                </div>
+                <div class="upload-area" id="upload-area">
+                    <input type="file" id="resume-file" accept=".pdf" hidden>
+                    <div class="upload-content" id="upload-content">
+                        <div class="upload-icon">📤</div>
+                        <p class="upload-text">Drop your PDF here or <span class="browse-link">browse</span></p>
+                        <p class="upload-hint">PDF only, max 5MB</p>
+                    </div>
+                    <div class="file-info" id="file-info" hidden>
+                        <div class="file-icon">📄</div>
+                        <div class="file-details">
+                            <span class="file-name" id="file-name"></span>
+                            <span class="file-size" id="file-size"></span>
+                        </div>
+                        <button class="remove-file" id="remove-file" title="Remove file">×</button>
+                    </div>
+                </div>
+                <div class="error-message" id="upload-error"></div>
+            </section>
+
+            <!-- Section 2: Job Input -->
+            <section class="card job-section" id="job-section">
+                <div class="card-header">
+                    <span class="step-number">2</span>
+                    <h2>Job Details</h2>
+                </div>
+                <div class="job-input-wrapper">
+                    <textarea id="job-input" placeholder="Paste a job description OR enter a job role (e.g., 'Backend Developer Intern')
+
+Example JD:
+We are looking for a Backend Developer with:
+- 2+ years Python experience
+- FastAPI or Django knowledge
+- PostgreSQL and Redis experience
+- Docker and Kubernetes familiarity
+- Experience with CI/CD pipelines" rows="8"></textarea>
+                    <div class="char-count" id="char-count">0 characters</div>
+                </div>
+            </section>
+
+            <!-- Section 3: Action -->
+            <section class="action-section">
+                <button class="scan-button" id="scan-button" disabled>
+                    <span class="button-text">Run ATS Scan</span>
+                    <span class="button-loader" hidden>
+                        <span class="loader-dot"></span>
+                        <span class="loader-dot"></span>
+                        <span class="loader-dot"></span>
+                    </span>
+                </button>
+                <p class="scan-status" id="scan-status"></p>
+            </section>
+
+            <!-- Section 4: Results -->
+            <section class="results-section" id="results-section" hidden>
+                <h2 class="results-title">ATS Analysis Results</h2>
+
+                <!-- Score Card -->
+                <div class="card score-card">
+                    <div class="score-header">
+                        <h3>ATS Match Score</h3>
+                        <div class="score-value" id="score-value">0</div>
+                    </div>
+                    <div class="progress-bar">
+                        <div class="progress-fill" id="progress-fill"></div>
+                    </div>
+                    <p class="score-description" id="score-description"></p>
+                </div>
+
+                <!-- Keywords Cards -->
+                <div class="keywords-grid">
+                    <!-- Matched Keywords -->
+                    <div class="card keywords-card matched">
+                        <h3>✅ Matched Keywords</h3>
+                        <div class="tags-container" id="matched-keywords">
+                            <!-- Tags will be inserted here -->
+                        </div>
+                    </div>
+
+                    <!-- Missing Keywords -->
+                    <div class="card keywords-card missing">
+                        <h3>❌ Missing Keywords</h3>
+                        <div class="tags-container" id="missing-keywords">
+                            <!-- Tags will be inserted here -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tips Card -->
+                <div class="card tips-card">
+                    <h3>💡 ATS Improvement Tips</h3>
+                    <div class="tips-list" id="tips-list">
+                        <!-- Tips will be inserted here -->
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Footer -->
+        <footer class="footer">
+            <p>Built to simulate real ATS behavior • No magic, no hallucinations</p>
+        </footer>
+    </div>
+
+    <script src="/static/script.js"></script>
+</body>
+
+</html>

@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pdfplumber
+python-multipart
+boto3
+botocore
+python-dotenv
+pdf2image
+pytesseract
+Pillow
+mangum

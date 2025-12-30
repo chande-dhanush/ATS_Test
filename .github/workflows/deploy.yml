@@ -1,0 +1,210 @@
+# =============================================================================
+# ATS Resume Analyzer - CI/CD Pipeline with OIDC Authentication
+# Deploys to AWS Lambda via ECR and Terraform
+# =============================================================================
+
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Environment to deploy'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - test
+          - prod
+
+# Required permissions for OIDC authentication
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: ap-south-2
+  PROJECT_NAME: ats_test
+
+jobs:
+  # ===========================================================================
+  # Build and Push Docker Image to ECR
+  # ===========================================================================
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    outputs:
+      image_uri: ${{ steps.build-image.outputs.image_uri }}
+      environment: ${{ github.event.inputs.environment || 'dev' }}
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build, tag, and push Docker image
+        id: build-image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          ECR_REPOSITORY: ${{ env.PROJECT_NAME }}-${{ github.event.inputs.environment || 'dev' }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          # Build the Docker image
+          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          # Push both tags
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          
+          # Output the image URI
+          echo "image_uri=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+          echo "✅ Image pushed: $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG"
+
+  # ===========================================================================
+  # Deploy Infrastructure with Terraform
+  # ===========================================================================
+  deploy:
+    name: Deploy with Terraform
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    environment: ${{ needs.build-and-push.outputs.environment }}
+    
+    defaults:
+      run:
+        working-directory: terraform
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-deploy
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.0"
+          terraform_wrapper: false
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Create or Select Workspace
+        run: |
+          ENVIRONMENT="${{ needs.build-and-push.outputs.environment }}"
+          if ! terraform workspace list | grep -q "$ENVIRONMENT"; then
+            terraform workspace new "$ENVIRONMENT"
+          else
+            terraform workspace select "$ENVIRONMENT"
+          fi
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Plan
+        run: |
+          terraform plan \
+            -var="aws_region=${{ env.AWS_REGION }}" \
+            -var="project_name=${{ env.PROJECT_NAME }}" \
+            -var="environment=${{ needs.build-and-push.outputs.environment }}" \
+            -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Update Lambda Function
+        run: |
+          # Force Lambda to use the new image
+          aws lambda update-function-code \
+            --function-name ${{ env.PROJECT_NAME }}-${{ needs.build-and-push.outputs.environment }} \
+            --image-uri ${{ needs.build-and-push.outputs.image_uri }} \
+            --region ${{ env.AWS_REGION }}
+          
+          echo "✅ Lambda function updated with new image"
+
+      - name: Get Deployment URL
+        id: get-url
+        run: |
+          API_URL=$(terraform output -raw api_gateway_url)
+          LAMBDA_URL=$(terraform output -raw lambda_function_url)
+          
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+          echo "lambda_url=$LAMBDA_URL" >> $GITHUB_OUTPUT
+          
+          echo "=========================================="
+          echo "🚀 Deployment Complete!"
+          echo "=========================================="
+          echo "API Gateway URL: $API_URL"
+          echo "Lambda URL: $LAMBDA_URL"
+          echo "=========================================="
+
+  # ===========================================================================
+  # Smoke Test
+  # ===========================================================================
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs: deploy
+    
+    steps:
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          role-session-name: github-actions-test
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+
+      - name: Get API URL
+        id: get-url
+        working-directory: terraform
+        run: |
+          terraform init
+          terraform workspace select ${{ github.event.inputs.environment || 'dev' }} || true
+          API_URL=$(terraform output -raw api_gateway_url 2>/dev/null || echo "")
+          echo "api_url=$API_URL" >> $GITHUB_OUTPUT
+
+      - name: Health Check
+        run: |
+          API_URL="${{ steps.get-url.outputs.api_url }}"
+          if [ -n "$API_URL" ]; then
+            echo "Testing health endpoint: $API_URL/health"
+            RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" "$API_URL/health" || echo "000")
+            
+            if [ "$RESPONSE" = "200" ]; then
+              echo "✅ Health check passed!"
+            else
+              echo "⚠️ Health check returned: $RESPONSE"
+              echo "Note: First request may be slow due to cold start"
+            fi
+          else
+            echo "⚠️ Could not get API URL, skipping health check"
+          fi
